@@ -6,11 +6,9 @@
 #   2. 数据库指向托管 Postgres（不再用容器内 db），密钥全部来自环境/密管。
 #   3. 按 docs/03 的「境内控制面 + 海外执行面」双平面：本文件是控制面示例；
 #      采集/发送/预热等执行面组件应部署在海外节点（见 infra/README.md）。
+# 生产建议用云托管 Postgres/Redis：把 DATABASE_URL/REDIS_URL 指向托管实例，
+# 并按需删除基础 compose 里的 db/redis 容器（或用 --scale db=0 redis=0 不启动它们）。
 services:
-  db:
-    # 生产建议用云托管 Postgres（RDS/云数据库），此处仅占位；真实部署可移除本服务。
-    profiles: ["local-db-only"]
-
   api:
     build:
       context: ./services/api
