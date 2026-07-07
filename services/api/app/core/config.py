@@ -49,9 +49,9 @@ class Settings(BaseSettings):
     llm_model_classifier: str = "deepseek-chat"
 
     # ---- 供应商选择（cloud 模式下选「付费 API」还是「免费/自建」变体）----------
-    # search:  serper（付费Google API） | searxng（自建免费）
-    # enrich:  hunter（付费） | website（免费，抓公司官网公开邮箱）
-    # verify:  zerobounce（付费） | local（免费，语法+MX+一次性域名检测）
+    # search:  apollo（最全2.7亿库，推荐） | serper（付费Google） | searxng（自建免费）
+    # enrich:  apollo（最全，推荐） | hunter（付费） | website（免费抓官网） | hunter+website
+    # verify:  zerobounce（付费高准，推荐） | local（免费，语法+MX+一次性域名检测）
     # sender:  ses（Amazon SES，推荐） | smtp（任意SMTP，含Brevo/Mailtrap免费档，仅测试用）
     search_provider: str = "serper"
     enrich_provider: str = "hunter"
@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     maps_api_key: str = ""
     hunter_api_key: str = ""
     snov_api_key: str = ""
+    apollo_api_key: str = ""       # Apollo.io（找客户+挖邮箱一体，最全面）
     email_verify_api_key: str = ""
     searxng_url: str = "http://localhost:8888"  # 自建 SearXNG 地址（免费搜索源）
 

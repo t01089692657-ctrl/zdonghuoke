@@ -114,13 +114,21 @@ class WebsiteEmailScraper:
 
 
 def build_real_enrichment() -> tuple[EnrichmentPort, ...]:
-    """按 ENRICH_PROVIDER 选富化：hunter(付费) 或 website(免费抓官网邮箱)。
+    """按 ENRICH_PROVIDER 选富化（瀑布顺序=命中即停）：
 
-    瀑布顺序=命中即停。website 免费可作首选；有 Hunter key 时 hunter 覆盖率更高。
+    apollo(最全) / hunter(付费) / website(免费抓官网) / hunter+website /
+    apollo+hunter+website(全瀑布)
     """
     provider = get_settings().enrich_provider.lower()
     if provider == "website":
         return (WebsiteEmailScraper(),)
-    if provider == "hunter+website":  # 先付费后免费兜底
+    if provider == "hunter+website":
         return (HunterEnrichment(), WebsiteEmailScraper())
+    if provider in ("apollo", "apollo+hunter+website"):
+        from app.adapters.real.apollo import ApolloEnrichment
+
+        if provider == "apollo":
+            return (ApolloEnrichment(),)
+        # 全瀑布：最全的 Apollo 优先 → Hunter 补 → 免费抓官网兜底
+        return (ApolloEnrichment(), HunterEnrichment(), WebsiteEmailScraper())
     return (HunterEnrichment(),)

@@ -147,8 +147,12 @@ class SearxngSearchSource:
 
 
 def build_real_data_sources() -> tuple[DataSourcePort, ...]:
-    """按 SEARCH_PROVIDER 选找客户源：serper(付费Google) 或 searxng(自建免费)。"""
+    """按 SEARCH_PROVIDER 选找客户源：apollo(最全) / serper(付费Google) / searxng(自建免费)。"""
     provider = get_settings().search_provider.lower()
+    if provider == "apollo":
+        from app.adapters.real.apollo import ApolloOrganizationSource
+
+        return (ApolloOrganizationSource(),)
     if provider == "searxng":
         return (SearxngSearchSource(),)
     return (SerperSearchSource(),)
