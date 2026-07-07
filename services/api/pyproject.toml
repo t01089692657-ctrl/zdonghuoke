@@ -26,6 +26,10 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
 ]
+# 仅云端真实发送(SES)需要；本地 fake 模式无需安装。用 `uv sync --extra cloud`。
+cloud = [
+    "boto3>=1.35",
+]
 
 [build-system]
 requires = ["hatchling"]
