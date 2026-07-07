@@ -71,9 +71,10 @@ def get_email_verifier() -> EmailVerifierPort:
         from app.adapters.fake.verifier import FakeEmailVerifier
 
         return FakeEmailVerifier()
-    from app.adapters.real.verifier import RealEmailVerifier
+    # zerobounce(付费) 或 local(免费 MX 校验)，由 VERIFY_PROVIDER 决定
+    from app.adapters.real.verifier import build_email_verifier
 
-    return RealEmailVerifier()
+    return build_email_verifier()
 
 
 @lru_cache
@@ -82,6 +83,11 @@ def get_email_sender() -> EmailSenderPort:
         from app.adapters.fake.sender import FakeEmailSender
 
         return FakeEmailSender()
+    # ses(推荐) 或 smtp(通用/免费档，仅测试)，由 SENDER_PROVIDER 决定
+    if get_settings().sender_provider.lower() == "smtp":
+        from app.adapters.real.smtp_sender import SmtpEmailSender
+
+        return SmtpEmailSender()
     from app.adapters.real.ses_sender import SesEmailSender
 
     return SesEmailSender()

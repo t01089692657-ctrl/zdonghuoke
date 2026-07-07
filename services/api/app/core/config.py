@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     llm_model_writer: str = "deepseek-chat"
     llm_model_classifier: str = "deepseek-chat"
 
+    # ---- 供应商选择（cloud 模式下选「付费 API」还是「免费/自建」变体）----------
+    # search:  serper（付费Google API） | searxng（自建免费）
+    # enrich:  hunter（付费） | website（免费，抓公司官网公开邮箱）
+    # verify:  zerobounce（付费） | local（免费，语法+MX+一次性域名检测）
+    # sender:  ses（Amazon SES，推荐） | smtp（任意SMTP，含Brevo/Mailtrap免费档，仅测试用）
+    search_provider: str = "serper"
+    enrich_provider: str = "hunter"
+    verify_provider: str = "zerobounce"
+    sender_provider: str = "ses"
+
     # 数据源 / enrichment / 验证（cloud 模式生效）
     serp_api_key: str = ""
     customs_api_key: str = ""
@@ -55,12 +65,20 @@ class Settings(BaseSettings):
     hunter_api_key: str = ""
     snov_api_key: str = ""
     email_verify_api_key: str = ""
+    searxng_url: str = "http://localhost:8888"  # 自建 SearXNG 地址（免费搜索源）
 
     # 邮件发送（Amazon SES；cloud 模式生效）
     aws_region: str = "us-east-1"
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     ses_configuration_set: str = "zdhk-outbound"
+
+    # 通用 SMTP 发送（sender_provider=smtp 时生效；可填 Brevo/Mailtrap 等免费档）
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
 
     # 安全
     secret_key: str = "dev-only-change-me-in-production"

@@ -17,6 +17,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "email-validator>=2.2",
     "tenacity>=9.0",           # 外部调用重试
+    "dnspython>=2.6",          # 免费本地邮箱验证的 MX 记录查询
 ]
 
 [project.optional-dependencies]

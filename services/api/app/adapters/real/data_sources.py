@@ -92,6 +92,63 @@ class SerperSearchSource:
         return out
 
 
+class SearxngSearchSource:
+    """自建 SearXNG（免费元搜索）作为找客户源。零 API 费用。
+
+    你在 Mac/服务器上用 docker 跑一个 SearXNG（见 docs/06），设 SEARXNG_URL 指向它即可。
+    SearXNG 需开启 JSON 输出（settings.yml 的 formats 含 json）。
+    """
+
+    @property
+    def source_type(self) -> DataSourceType:
+        return DataSourceType.search_engine
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    async def search(self, query: LeadSearchQuery) -> list[CompanyCandidate]:
+        settings = get_settings()
+        q_terms = list(query.keywords)
+        if query.industry:
+            q_terms.append(query.industry)
+        q = " ".join(q_terms) + " (importer OR distributor OR wholesaler)"
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{settings.searxng_url.rstrip('/')}/search",
+                    params={"q": q, "format": "json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as e:
+            raise ExternalServiceError(
+                f"SearXNG 搜索失败（是否已启动并开启 json 输出？）: {e}"
+            ) from e
+
+        out: list[CompanyCandidate] = []
+        seen: set[str] = set()
+        for item in data.get("results", [])[: query.limit]:
+            domain = _domain_of(item.get("url", ""))
+            if not domain or domain in seen:
+                continue
+            seen.add(domain)
+            out.append(
+                CompanyCandidate(
+                    name=item.get("title", domain).split(" - ")[0].split(" | ")[0].strip(),
+                    domain=domain,
+                    website=f"https://{domain}",
+                    country=query.countries[0] if query.countries else None,
+                    industry=query.industry,
+                    description=item.get("content"),
+                    source_type=self.source_type,
+                    source_ref=item.get("url"),
+                )
+            )
+        log.info("searxng.search", q=q, results=len(out))
+        return out
+
+
 def build_real_data_sources() -> tuple[DataSourcePort, ...]:
-    """登记启用的真实数据源。先上 Serper；海关/地图接入后追加到此元组。"""
+    """按 SEARCH_PROVIDER 选找客户源：serper(付费Google) 或 searxng(自建免费)。"""
+    provider = get_settings().search_provider.lower()
+    if provider == "searxng":
+        return (SearxngSearchSource(),)
     return (SerperSearchSource(),)
