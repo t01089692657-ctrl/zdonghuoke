@@ -12,16 +12,16 @@ from app.modules.campaigns.router import router as campaigns_router
 from app.modules.compliance.router import router as compliance_router
 from app.modules.crm.router import router as crm_router
 from app.modules.leads.router import router as leads_router
+from app.modules.orchestration.router import router as orchestration_router
 from app.modules.sending.router import router as sending_router
 
 api_router = APIRouter(prefix="/api")
 
-# 已实现
 api_router.include_router(leads_router)
 api_router.include_router(compliance_router)
-# 由各工程师填充（当前为骨架）
 api_router.include_router(sending_router)
 api_router.include_router(agent_router)
 api_router.include_router(campaigns_router)
 api_router.include_router(crm_router)
 api_router.include_router(analytics_router)
+api_router.include_router(orchestration_router)

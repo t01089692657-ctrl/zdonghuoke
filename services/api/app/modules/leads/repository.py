@@ -46,3 +46,10 @@ class LeadRepository:
         self.session.add(contact)
         await self.session.flush()
         return contact
+
+    async def find_contact_by_email(self, email: str) -> Contact | None:
+        """按邮箱找联系人（入站回复归因：来信邮箱 → 联系人 → 公司）。"""
+        result = await self.session.execute(
+            select(Contact).where(Contact.email == email.strip().lower()).limit(1)
+        )
+        return result.scalar_one_or_none()

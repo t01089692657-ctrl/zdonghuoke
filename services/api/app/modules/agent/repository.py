@@ -51,5 +51,25 @@ class AgentRepository:
         )
         return int(result.scalar_one())
 
+    async def list_by_campaign(
+        self, campaign_id: str, status: ApprovalStatus | None = None
+    ) -> list[DraftApproval]:
+        """按活动查草稿（可按状态过滤）。orchestration 用它取「已批准」的草稿去入队发送。"""
+        stmt = select(DraftApproval).where(DraftApproval.campaign_id == campaign_id)
+        if status is not None:
+            stmt = stmt.where(DraftApproval.status == status)
+        result = await self.session.execute(stmt.order_by(DraftApproval.created_at.asc()))
+        return list(result.scalars().all())
+
+    async def find_draft(self, campaign_id: str, lead_id: str) -> DraftApproval | None:
+        """查同一活动同一线索是否已有草稿（任意状态），保证重复 prepare 幂等。"""
+        result = await self.session.execute(
+            select(DraftApproval)
+            .where(DraftApproval.campaign_id == campaign_id)
+            .where(DraftApproval.lead_id == lead_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def flush(self) -> None:
         await self.session.flush()

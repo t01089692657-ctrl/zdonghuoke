@@ -156,6 +156,14 @@ class AgentService:
     async def list_pending(self) -> list[DraftApproval]:
         return await self.repo.list_pending()
 
+    async def approved_drafts(self, campaign_id: str) -> list[DraftApproval]:
+        """某活动下全部「已批准」草稿。orchestration 只把这些内容入队发送。"""
+        return await self.repo.list_by_campaign(campaign_id, ApprovalStatus.approved)
+
+    async def has_draft(self, campaign_id: str, lead_id: str) -> bool:
+        """同活动同线索是否已有草稿（任意状态），供 prepare 幂等判断。"""
+        return await self.repo.find_draft(campaign_id, lead_id) is not None
+
     async def approve(self, draft_id: str, reviewer: str) -> DraftApproval:
         draft = await self._require_draft(draft_id)
         draft.status = ApprovalStatus.approved
