@@ -1,0 +1,54 @@
+# 生产/云端覆盖层。与基础 docker-compose.yml 叠加使用：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 与本地的关键差异：
+#   1. ADAPTER_MODE=cloud —— 切换到真实适配器（大模型/海关/SES…）。业务代码零改动。
+#   2. 数据库指向托管 Postgres（不再用容器内 db），密钥全部来自环境/密管。
+#   3. 按 docs/03 的「境内控制面 + 海外执行面」双平面：本文件是控制面示例；
+#      采集/发送/预热等执行面组件应部署在海外节点（见 infra/README.md）。
+services:
+  db:
+    # 生产建议用云托管 Postgres（RDS/云数据库），此处仅占位；真实部署可移除本服务。
+    profiles: ["local-db-only"]
+
+  api:
+    build:
+      context: ./services/api
+    environment:
+      APP_ENV: production
+      ADAPTER_MODE: cloud
+      LOG_JSON: "true"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS}
+      # 大模型（只接已备案国产模型 → 生成式 AI 走「登记」轻路径）
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL_WRITER: ${LLM_MODEL_WRITER}
+      LLM_MODEL_CLASSIFIER: ${LLM_MODEL_CLASSIFIER}
+      # 数据源 / 富化 / 验证
+      SERP_API_KEY: ${SERP_API_KEY}
+      CUSTOMS_API_KEY: ${CUSTOMS_API_KEY}
+      MAPS_API_KEY: ${MAPS_API_KEY}
+      HUNTER_API_KEY: ${HUNTER_API_KEY}
+      SNOV_API_KEY: ${SNOV_API_KEY}
+      EMAIL_VERIFY_API_KEY: ${EMAIL_VERIFY_API_KEY}
+      # 邮件发送（SES，部署在海外执行面）
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET}
+      SECRET_KEY: ${SECRET_KEY}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL}
+    restart: unless-stopped
