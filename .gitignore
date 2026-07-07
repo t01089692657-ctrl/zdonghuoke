@@ -25,6 +25,7 @@ dist/
 *.sqlite
 *.sqlite3
 local.db
+*.db
 data/
 
 # Editors / OS
