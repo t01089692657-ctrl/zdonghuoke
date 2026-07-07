@@ -1,0 +1,63 @@
+# Mac mini 本地全栈：一条命令  make up  即可。
+# 生产环境用 docker-compose.prod.yml 覆盖（见 infra/ 与 docs/03）。
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zdhk
+      POSTGRES_PASSWORD: zdhk
+      POSTGRES_DB: zdhk
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zdhk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./services/api
+    environment:
+      APP_ENV: local
+      ADAPTER_MODE: local          # Mac mini 默认用 fake 适配器，零外部依赖即可跑通
+      DATABASE_URL: postgresql+asyncpg://zdhk:zdhk@db:5432/zdhk
+      REDIS_URL: redis://redis:6379/0
+      API_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
