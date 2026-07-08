@@ -20,7 +20,7 @@ class OpenAICompatibleLLM:
         self._api_key = s.llm_api_key
         self._default_model = s.llm_model_writer
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def complete(
         self,
         messages: list[LLMMessage],
@@ -52,8 +52,15 @@ class OpenAICompatibleLLM:
         except httpx.HTTPError as e:
             raise ExternalServiceError(f"LLM 调用失败: {e}") from e
 
-        choice = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
+        # 网关可能返回 200 + error body，或 content=null；健壮解析，不让 KeyError 冒泡成 500
+        try:
+            choice = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            err = data.get("error") if isinstance(data, dict) else None
+            raise ExternalServiceError(f"LLM 返回异常: {err or data}") from e
+        if choice is None:
+            raise ExternalServiceError("LLM 返回空内容(content=null)")
+        usage = data.get("usage", {}) or {}
         return LLMResponse(
             content=choice,
             model=body["model"],

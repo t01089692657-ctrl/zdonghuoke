@@ -150,9 +150,34 @@ async def track_open(message_id: str, session: AsyncSession = Depends(get_sessio
 
 @router.get("/track/click/{message_id}")
 async def track_click(
-    message_id: str, url: str, session: AsyncSession = Depends(get_session)
+    message_id: str, url: str, sig: str = "", session: AsyncSession = Depends(get_session)
 ):
-    """记录一次点击后 302 跳到目标 url（url 为查询参数）。"""
+    """记录一次点击后 302 跳到目标 url。
+
+    防开放重定向：url 必须带我们签发的 sig（HMAC）才放行，否则 400。
+    追踪链接由发送端用 build_click_url() 生成并签名，杜绝本域被当钓鱼跳板。
+    """
+    from app.core.errors import ValidationError
+    from app.core.security import verify
+
+    if not verify(f"{message_id}:{url}", sig):
+        raise ValidationError("非法的追踪链接（签名校验失败）")
     svc = build_sending_service(session)
     await svc.record_click(message_id)
     return RedirectResponse(url=url, status_code=302)
+
+
+@router.api_route("/unsubscribe", methods=["GET", "POST"])
+async def unsubscribe(email: str, sig: str = "", session: AsyncSession = Depends(get_session)):
+    """一键退订（RFC 8058）：校验签名 → 加入全局抑制列表 → 停止其所有序列。
+
+    List-Unsubscribe 头里的链接指向这里；GET 供用户点击，POST 供邮箱商 One-Click。
+    """
+    from app.core.errors import ValidationError
+    from app.core.security import verify
+
+    if not verify(f"unsub:{email.strip().lower()}", sig):
+        raise ValidationError("非法的退订链接（签名校验失败）")
+    svc = build_sending_service(session)
+    n = await svc.record_unsubscribe(email)
+    return {"unsubscribed": email.strip().lower(), "sequences_stopped": n}

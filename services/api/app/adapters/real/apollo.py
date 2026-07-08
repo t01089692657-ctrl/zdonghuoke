@@ -61,7 +61,7 @@ class ApolloOrganizationSource:
     def source_type(self) -> DataSourceType:
         return DataSourceType.search_engine
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def search(self, query: LeadSearchQuery) -> list[CompanyCandidate]:
         payload: dict = {
             "page": 1,
@@ -110,7 +110,7 @@ class ApolloEnrichment:
     def name(self) -> str:
         return "apollo"
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def find_emails(
         self, domain: str, *, first_name: str | None = None, last_name: str | None = None
     ) -> list[EmailCandidate]:

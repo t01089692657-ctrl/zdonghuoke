@@ -41,33 +41,36 @@ class SesEmailSender:
         return self._client
 
     async def send(self, email: OutboundEmail) -> SendResult:
-        settings = get_settings()
-        client = self._get_client()
-        body: dict = {"Html": {"Data": email.body_html, "Charset": "UTF-8"}}
-        if email.body_text:
-            body["Text"] = {"Data": email.body_text, "Charset": "UTF-8"}
-        kwargs = {
-            "Source": email.from_email,
-            "Destination": {"ToAddresses": [email.to_email]},
-            "Message": {
-                "Subject": {"Data": email.subject, "Charset": "UTF-8"},
-                "Body": body,
-            },
-        }
-        if email.headers:
-            # SES v2 支持自定义头；此处经 send_email 的 Tags/ReplyTo 之外的头需用 SESv2，
-            # 为简洁起见，List-Unsubscribe 等由发送层拼进 body/headers 时用 send_raw_email 更佳。
-            pass
-        if settings.ses_configuration_set:
-            kwargs["ConfigurationSetName"] = settings.ses_configuration_set
+        import asyncio
 
         try:
-            # boto3 是同步库；用线程池避免阻塞事件循环
-            import asyncio
-
-            resp = await asyncio.to_thread(client.send_email, **kwargs)
+            # 整个「建客户端 + raw MIME 发送」都放到线程池：boto3 建客户端会读磁盘配置，
+            # 若在事件循环线程内执行会阻塞。确保自定义头（List-Unsubscribe）随信发出。
+            resp = await asyncio.to_thread(self._send_raw, email)
         except Exception as e:  # botocore ClientError 等
             log.warning("ses.send_failed", to=email.to_email, error=str(e))
             return SendResult(accepted=False, error=str(e))
-
         return SendResult(message_id=resp.get("MessageId"), accepted=True)
+
+    def _send_raw(self, email: OutboundEmail) -> dict:
+        from email.message import EmailMessage
+
+        client = self._get_client()
+        settings = get_settings()
+        msg = EmailMessage()
+        msg["From"] = email.from_email
+        msg["To"] = email.to_email
+        msg["Subject"] = email.subject
+        for k, v in (email.headers or {}).items():
+            msg[k] = v
+        msg.set_content(email.body_text or "")
+        msg.add_alternative(email.body_html, subtype="html")
+
+        kwargs = {
+            "Source": email.from_email,
+            "Destinations": [email.to_email],
+            "RawMessage": {"Data": msg.as_bytes()},
+        }
+        if settings.ses_configuration_set:
+            kwargs["ConfigurationSetName"] = settings.ses_configuration_set
+        return client.send_raw_email(**kwargs)

@@ -14,12 +14,18 @@ from app.domain.enums import EmailType, WarmupStage
 # 生产环境应扩充为可维护的完整清单（数百个），这里覆盖主流。
 FREE_EMAIL_DOMAINS: frozenset[str] = frozenset(
     {
-        "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.jp", "ymail.com",
-        "hotmail.com", "outlook.com", "live.com", "msn.com", "aol.com",
-        "icloud.com", "me.com", "mac.com", "protonmail.com", "proton.me",
-        "gmx.com", "gmx.de", "mail.com", "zoho.com", "yandex.com", "yandex.ru",
-        "163.com", "126.com", "qq.com", "foxmail.com", "sina.com", "sohu.com",
-        "139.com", "189.cn", "aliyun.com", "naver.com", "hanmail.net", "daum.net",
+        "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.jp", "yahoo.co.uk",
+        "yahoo.fr", "yahoo.de", "yahoo.es", "yahoo.it", "yahoo.in", "ymail.com",
+        "rocketmail.com", "hotmail.com", "hotmail.co.uk", "hotmail.fr", "hotmail.it",
+        "outlook.com", "outlook.fr", "outlook.de", "live.com", "live.co.uk", "msn.com",
+        "aol.com", "icloud.com", "me.com", "mac.com", "protonmail.com", "proton.me",
+        "pm.me", "gmx.com", "gmx.de", "gmx.net", "web.de", "t-online.de", "mail.com",
+        "mail.ru", "inbox.ru", "list.ru", "bk.ru", "zoho.com", "yandex.com", "yandex.ru",
+        "163.com", "126.com", "yeah.net", "qq.com", "foxmail.com", "sina.com", "sina.cn",
+        "sohu.com", "139.com", "189.cn", "wo.cn", "21cn.com", "aliyun.com", "tom.com",
+        "naver.com", "hanmail.net", "daum.net", "nate.com", "hotmail.com.br", "bol.com.br",
+        "uol.com.br", "terra.com.br", "libero.it", "virgilio.it", "orange.fr", "free.fr",
+        "wanadoo.fr", "laposte.net", "seznam.cz", "o2.pl", "wp.pl", "onet.pl", "rediffmail.com",
     }
 )
 
@@ -44,7 +50,15 @@ def email_domain(email: str) -> str | None:
 
 
 def is_free_email_domain(domain: str) -> bool:
-    return domain.strip().lower() in FREE_EMAIL_DOMAINS
+    """精确命中，或是某个免费域名的子域（如 mail.qq.com → qq.com）。
+
+    子域匹配用 endswith('.'+free) 保证不会误伤把免费域名当子串的企业域名
+    （如 notgmail.com 不会命中 gmail.com）。
+    """
+    d = domain.strip().lower()
+    if d in FREE_EMAIL_DOMAINS:
+        return True
+    return any(d.endswith("." + free) for free in FREE_EMAIL_DOMAINS)
 
 
 def classify_email_type(email: str) -> EmailType:

@@ -47,11 +47,14 @@ class LeadService:
             all_candidates.extend(found)
 
         # 2) 跨源去重（内存内先合并，再与库中已有对齐）
+        # 关键：命中重复时【合并字段】而非丢弃后到者——否则海关采购信号(评分最大项)
+        # 可能被先到的搜索源结果覆盖清零。
         merged: dict[str, CompanyCandidate] = {}
         duplicates = 0
         for c in all_candidates:
             fp = dedup_fingerprint(c.name, c.domain, c.country)
             if fp in merged:
+                merged[fp] = self._merge_candidates(merged[fp], c)
                 duplicates += 1
             else:
                 merged[fp] = c
@@ -89,9 +92,16 @@ class LeadService:
             has_verified = False
             contacts: list[Contact] = []
 
-            # 3) 富化 + 验证（可选）
+            # 3) 富化 + 验证（可选）。单个公司富化/验证失败不能拖垮整批 discover：
+            #    与数据源检索的容错对称——捕获后跳过该公司的联系人，其余照常。
+            enriched = []
             if enrich and cand.domain:
-                enriched = await self.enrichment.enrich_domain(cand.domain)
+                try:
+                    enriched = await self.enrichment.enrich_domain(cand.domain)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("discover.enrich_failed", domain=cand.domain, error=str(e))
+                    enriched = []
+            if enriched:
                 for ec in enriched:
                     contacts_found += 1
                     is_corp = ec.verification.email_type is EmailType.corporate
@@ -141,6 +151,22 @@ class LeadService:
             "sendable_contacts": sendable,
             "companies": companies,
         }
+
+    @staticmethod
+    def _merge_candidates(base: CompanyCandidate, extra: CompanyCandidate) -> CompanyCandidate:
+        """同一家公司跨源合并：base 缺失的字段用 extra 补，raw 信号并集（不丢海关等信号）。"""
+        merged_raw = {**(extra.raw or {}), **(base.raw or {})}
+        return base.model_copy(
+            update={
+                "name": base.name or extra.name,
+                "domain": base.domain or extra.domain,
+                "website": base.website or extra.website,
+                "country": base.country or extra.country,
+                "industry": base.industry or extra.industry,
+                "description": base.description or extra.description,
+                "raw": merged_raw,
+            }
+        )
 
     def _prov(self, cand: CompanyCandidate) -> dict:
         return {

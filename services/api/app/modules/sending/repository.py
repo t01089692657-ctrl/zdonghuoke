@@ -61,11 +61,18 @@ class SendingRepository:
 
     # ---- 外发邮件 ----------------------------------------------------------
     async def get_message_by_external_id(self, message_id: str) -> OutboundMessage | None:
-        """按发送适配器返回的 message_id 查（供 open/click 探针回填）。"""
+        """按发送适配器返回的 message_id 查（供 open/click 探针回填）。
+
+        用 first() 而非 scalar_one_or_none()：即便历史数据里存在重复 message_id，
+        探针回填也不该因此 500（MultipleResultsFound）。取最近一条即可。
+        """
         result = await self.session.execute(
-            select(OutboundMessage).where(OutboundMessage.message_id == message_id)
+            select(OutboundMessage)
+            .where(OutboundMessage.message_id == message_id)
+            .order_by(OutboundMessage.created_at.desc())
+            .limit(1)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def message_stats(self) -> tuple[int, int, int]:
         """返回 (总发送数, 退信数, 投诉数)，供送达健康度计算。"""

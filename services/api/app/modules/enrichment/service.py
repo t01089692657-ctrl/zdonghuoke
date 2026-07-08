@@ -8,9 +8,18 @@ from dataclasses import dataclass
 
 from app.core.logging import get_logger
 from app.domain.contracts import EmailCandidate, VerificationResult
+from app.domain.rules import email_domain
 from app.ports.data_source import EmailVerifierPort, EnrichmentPort
 
 log = get_logger("enrichment")
+
+
+def _same_company_domain(email: str, target: str) -> bool:
+    """邮箱域名是否属于目标公司域名（同域或子域）。"""
+    ed = email_domain(email)
+    t = target.strip().lower()
+    t = t[4:] if t.startswith("www.") else t
+    return bool(ed) and (ed == t or ed.endswith("." + t) or t.endswith("." + ed))
 
 
 @dataclass
@@ -51,6 +60,11 @@ class EnrichmentService:
                 log.warning("enrichment.provider_failed", provider=provider.name, error=str(e))
                 continue
             if found:
-                log.info("enrichment.hit", provider=provider.name, domain=domain, n=len(found))
-                return found
+                # 抓官网可能抓到第三方邮箱（建站商/客服系统/外部代理），会被误当作该公司联系人
+                # 甚至被冷发。对 website 源强制只保留目标公司域名下的邮箱。
+                if provider.name == "website":
+                    found = [c for c in found if _same_company_domain(c.email, domain)]
+                if found:
+                    log.info("enrichment.hit", provider=provider.name, domain=domain, n=len(found))
+                    return found
         return []

@@ -95,11 +95,17 @@ class OrchestrationService:
 
         enrolled = 0
         waiting_approval = 0
+        # 草稿按 company 生成（一家一封个性化信）。为避免把同一封信群发给同公司的每个联系人，
+        # 每家公司只入队一个目标（主联系人/第一个）。
+        seen_companies: set[str] = set()
         for target in targets:
             draft = approved.get(target.company_id)
             if draft is None or not target.to_email:
                 waiting_approval += 1
                 continue
+            if target.company_id in seen_companies:
+                continue  # 该公司已入队，跳过其余联系人，避免重复冷触达
+            seen_companies.add(target.company_id)
             followups = await self._followup_steps(campaign, target)
             steps = [
                 {"step": 1, "wait_days": 0, "subject": draft.subject, "body": draft.body},
@@ -160,12 +166,23 @@ class OrchestrationService:
             "actions": actions,
         }
 
+    # 低于此置信度的分类不触发不可逆动作（改 CRM 阶段/停序列），转人工复核
+    _MIN_CONFIDENCE = 0.6
+
     async def _route_actions(
         self, from_email: str, classification: ReplyClassification
     ) -> list[str]:
         actions: list[str] = []
         intent = classification.intent
         email = from_email.strip().lower()
+
+        # 置信度闸门：低置信度分类不做不可逆动作（退订/停序列/改阶段），只挂人工复核。
+        # 退订例外——宁可错停也不能漏退订（合规优先），故 unsubscribe 不受此闸门限制。
+        low_conf = classification.confidence < self._MIN_CONFIDENCE
+        if intent is not ReplyIntent.unsubscribe and low_conf:
+            log.info("inbound.low_confidence", email=email, intent=intent.value,
+                     confidence=classification.confidence)
+            return ["needs_human_review"]
 
         if intent is ReplyIntent.unsubscribe:
             stopped = await self.sending.record_unsubscribe(email)
@@ -195,8 +212,9 @@ class OrchestrationService:
                 )
                 actions.append("crm_activity_logged")
         elif intent is ReplyIntent.bounce:
-            stopped = await self.sending.record_reply(email)
-            actions.append(f"sequence_stopped({stopped})")
+            # 退信：不仅停序列，还要进抑制列表——否则后续活动会再次向已知坏邮箱发信
+            stopped = await self.sending.record_bounce(email)
+            actions.append(f"suppressed+stopped({stopped})")
         else:
             # out_of_office / unknown：不动序列，低置信度已由 agent 标注 needs_review
             actions.append("no_sequence_action")

@@ -21,6 +21,37 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # 抓官网时优先看这些页面
 _CONTACT_PATHS = ("", "/contact", "/contact-us", "/about", "/about-us", "/impressum")
 
+# 合法域名形状（防把内网主机名/带端口/路径塞进来）
+_LABEL = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+_DOMAIN_RE = re.compile(rf"^{_LABEL}(\.{_LABEL})+$")
+
+
+def _is_safe_public_host(domain: str) -> bool:
+    """防 SSRF：只允许形状合法、且解析到公网 IP 的域名。
+
+    拒绝：IP 字面量、localhost、内网/回环/链路本地地址、云元数据 169.254.169.254 等。
+    """
+    import ipaddress
+    import socket
+
+    d = (domain or "").strip().lower()
+    if not _DOMAIN_RE.match(d):
+        return False
+    try:
+        infos = socket.getaddrinfo(d, None)
+    except Exception:
+        return False
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+            return False
+    return True
+
 
 class HunterEnrichment:
     """Hunter.io 域名搜索：给定公司域名，返回该域名下的公开邮箱与职位。
@@ -32,7 +63,7 @@ class HunterEnrichment:
     def name(self) -> str:
         return "hunter"
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def find_emails(
         self, domain: str, *, first_name: str | None = None, last_name: str | None = None
     ) -> list[EmailCandidate]:
@@ -83,8 +114,13 @@ class WebsiteEmailScraper:
         self, domain: str, *, first_name: str | None = None, last_name: str | None = None
     ) -> list[EmailCandidate]:
         found: dict[str, EmailCandidate] = {}
+        # 防 SSRF：domain 必须是解析到公网 IP 的正常主机，拒绝内网/回环/云元数据地址
+        if not _is_safe_public_host(domain):
+            log.warning("website.scrape.blocked_host", domain=domain)
+            return []
         async with httpx.AsyncClient(
-            timeout=15, follow_redirects=True, headers={"User-Agent": "ZDHK-LeadBot/1.0"}
+            timeout=15, follow_redirects=True, max_redirects=3,
+            headers={"User-Agent": "ZDHK-LeadBot/1.0"}
         ) as client:
             for path in _CONTACT_PATHS:
                 url = f"https://{domain}{path}"

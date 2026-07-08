@@ -62,11 +62,16 @@ class AgentRepository:
         return list(result.scalars().all())
 
     async def find_draft(self, campaign_id: str, lead_id: str) -> DraftApproval | None:
-        """查同一活动同一线索是否已有草稿（任意状态），保证重复 prepare 幂等。"""
+        """查同一活动同一线索是否已有【未被拒绝】的草稿（pending/approved）。
+
+        排除 rejected：被拒的草稿不应永久阻塞该公司重新备信——否则人一驳回，
+        这家公司就再也无法生成新草稿、永远进不了 launch。
+        """
         result = await self.session.execute(
             select(DraftApproval)
             .where(DraftApproval.campaign_id == campaign_id)
             .where(DraftApproval.lead_id == lead_id)
+            .where(DraftApproval.status != ApprovalStatus.rejected)
             .limit(1)
         )
         return result.scalar_one_or_none()

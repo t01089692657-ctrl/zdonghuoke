@@ -85,7 +85,7 @@ class LocalMxVerifier:
 
 
 class RealEmailVerifier:
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def verify(self, email: str) -> VerificationResult:
         settings = get_settings()
         if not settings.email_verify_api_key:
@@ -100,6 +100,10 @@ class RealEmailVerifier:
         except httpx.HTTPError as e:
             raise ExternalServiceError(f"ZeroBounce 调用失败: {e}") from e
 
+        # ZeroBounce 错误响应(如 Invalid API Key)没有 status 字段——必须显式报错，
+        # 否则会被静默当成 unknown，等于"验证被无声关闭、坏邮箱照发"。
+        if not isinstance(data, dict) or "status" not in data or data.get("error"):
+            raise ExternalServiceError(f"ZeroBounce 返回异常: {data.get('error') or data}")
         status = _STATUS_MAP.get(data.get("status", "unknown"), EmailStatus.unknown)
         return VerificationResult(
             email=email,

@@ -42,7 +42,7 @@ class SerperSearchSource:
     def source_type(self) -> DataSourceType:
         return DataSourceType.search_engine
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def search(self, query: LeadSearchQuery) -> list[CompanyCandidate]:
         settings = get_settings()
         if not settings.serp_api_key:
@@ -103,7 +103,7 @@ class SearxngSearchSource:
     def source_type(self) -> DataSourceType:
         return DataSourceType.search_engine
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def search(self, query: LeadSearchQuery) -> list[CompanyCandidate]:
         settings = get_settings()
         q_terms = list(query.keywords)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from app.core.errors import ValidationError
+from app.core.errors import ComplianceError, ValidationError
 from app.core.logging import get_logger
 from app.domain.contracts import OutboundEmail
 from app.domain.enums import SequenceState, SuppressionReason, WarmupStage
@@ -54,8 +54,9 @@ class TickReport:
 
     processed: int = 0
     sent: int = 0
-    skipped: int = 0  # 被合规拦截而跳过
+    skipped: int = 0  # 被合规拦截/硬退信而永久停止
     completed: int = 0
+    deferred: int = 0  # 瞬态失败（额度满/软退信/网络）→ 顺延重试，不推进不停用
 
 
 def _as_aware(dt: datetime | None) -> datetime | None:
@@ -189,7 +190,8 @@ class SendingService:
         if mailbox is None:
             raise ValidationError("无可用发信邮箱：额度已满或没有 DNS 达标的发信域")
 
-        # 4) 投递（走端口，本地 fake 不真发）
+        # 4) 投递（走端口，本地 fake 不真发）。强制注入一键退订头（合规红线，RFC 8058）。
+        unsub_headers = self._unsubscribe_headers(to_email)
         result = await self.sender.send(
             OutboundEmail(
                 to_email=to_email,
@@ -197,6 +199,7 @@ class SendingService:
                 subject=subject,
                 body_html=body,
                 body_text=body,
+                headers=unsub_headers,
             )
         )
         now = self.clock.now()
@@ -235,6 +238,21 @@ class SendingService:
             spam_warnings=spam.warnings,
         )
 
+    def _unsubscribe_headers(self, to_email: str) -> dict[str, str]:
+        """生成 List-Unsubscribe 头（带签名的退订链接），满足批量发件人合规要求。"""
+        from app.core.config import get_settings
+        from app.core.security import sign
+
+        settings = get_settings()
+        addr = to_email.strip().lower()
+        sig = sign(f"unsub:{addr}")
+        base = settings.public_base_url.rstrip("/")
+        url = f"{base}/api/sending/unsubscribe?email={addr}&sig={sig}"
+        return {
+            "List-Unsubscribe": f"<{url}>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        }
+
     # ---- 序列：报名与推进 -------------------------------------------------
     async def enroll(
         self,
@@ -256,11 +274,17 @@ class SendingService:
         await self.repo.add(enrollment)
         return enrollment
 
+    # 瞬态失败顺延重试的间隔（额度满/软退信/网络抖动）。
+    _RETRY_AFTER = timedelta(hours=1)
+
     async def tick_sequences(self) -> TickReport:
         """推进所有到期序列：发下一步、排下一步、走到底则完成。
 
-        - 合规拦截：跳过并把该 enrollment 置为 stopped（该地址无法发送，重试无意义）；
-        - 复用 send_one，因此频控/风险评分/退信闭环一并生效。
+        关键：区分「永久失败」与「瞬态失败」，二者处理截然不同——
+        - 永久失败（合规拦截 ComplianceError / 硬退信）：置 stopped，不再重试；
+        - 瞬态失败（无可用邮箱=当日额度满 / 软退信 / 网络）：**不推进 step、不停用**，
+          仅把 next_action_at 顺延，下一轮重试。绝不能把这类当永久失败丢弃线索；
+        - **只有真正发送成功（accepted）才推进 step_index**，避免失败的一步被跳过且白占额度。
         """
         report = TickReport()
         due = await self.scheduler.due_enrollments(self.repo, _ACTIVE_STATES)
@@ -274,19 +298,38 @@ class SendingService:
             report.processed += 1
             step = steps[enr.step_index]
             try:
-                await self.send_one(
+                outcome = await self.send_one(
                     enr.to_email,
                     step.get("subject", ""),
                     step.get("body", ""),
                     campaign_id=enr.campaign_id,
                     lead_id=enr.lead_id,
                 )
-            except Exception as exc:  # noqa: BLE001 - 合规拦截等：跳过该条，不影响其它
+            except ComplianceError as exc:
+                # 永久：个人邮箱/已抑制 → 停止，重试无意义
                 enr.state = SequenceState.stopped
                 report.skipped += 1
-                log.info("sequence.step_skipped", to=enr.to_email, reason=str(exc))
+                log.info("sequence.step_stopped", to=enr.to_email, reason=str(exc))
+                continue
+            except Exception as exc:  # noqa: BLE001 - 无可用邮箱/网络等瞬态：顺延重试
+                enr.next_action_at = now + self._RETRY_AFTER
+                report.deferred += 1
+                log.info("sequence.step_deferred", to=enr.to_email, reason=str(exc))
                 continue
 
+            if outcome.bounced:
+                # 硬退信：send_one 已抑制该地址 → 停止序列
+                enr.state = SequenceState.stopped
+                report.skipped += 1
+                continue
+            if not outcome.accepted:
+                # 软失败（SMTP 4xx/超时）：不推进 step，顺延重试
+                enr.next_action_at = now + self._RETRY_AFTER
+                report.deferred += 1
+                log.info("sequence.step_soft_fail", to=enr.to_email)
+                continue
+
+            # 只有发送成功才推进
             report.sent += 1
             enr.step_index += 1
             if enr.step_index < len(steps):
@@ -329,6 +372,13 @@ class SendingService:
             to_email, SuppressionReason.unsubscribe, note="收件人退订"
         )
         return await self._stop_enrollments(to_email, SequenceState.unsubscribed)
+
+    async def record_bounce(self, to_email: str) -> int:
+        """入站退信：加入抑制列表（永不再发）并停止该地址所有进行中序列。"""
+        await self.compliance.add_suppression(
+            to_email, SuppressionReason.hard_bounce, note="入站退信自动抑制"
+        )
+        return await self._stop_enrollments(to_email, SequenceState.stopped)
 
     async def record_complaint(self, to_email: str, message_id: str | None = None) -> int:
         """投诉：加入抑制列表、停止序列，并标记对应外发邮件 complained。"""

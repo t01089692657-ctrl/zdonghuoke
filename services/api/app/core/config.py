@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     # 安全
     secret_key: str = "dev-only-change-me-in-production"
     access_token_expire_minutes: int = 1440
+    # 对外可访问的基础 URL（退订/追踪链接用；Mac mini 经 Cloudflare Tunnel 时填公网域名）
+    public_base_url: str = "http://localhost:8000"
 
     @property
     def cors_origin_list(self) -> list[str]:
